@@ -37,7 +37,8 @@
  * in the main loop. We keep debounce in the main loop (not in EXTI)
  * as requested so EXTI only sets the `btn_pressed` flag.
  */
-#define DEBOUNCE_MS 50
+// #define DEBOUNCE_MS 50
+#define DEBOUNCE_MS 120
 
 /* USER CODE END PD */
 
