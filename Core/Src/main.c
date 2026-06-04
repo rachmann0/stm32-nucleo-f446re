@@ -32,6 +32,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/*
+ * Debounce interval (milliseconds) used when processing button presses
+ * in the main loop. We keep debounce in the main loop (not in EXTI)
+ * as requested so EXTI only sets the `btn_pressed` flag.
+ */
+#define DEBOUNCE_MS 50
 
 /* USER CODE END PD */
 
@@ -48,8 +54,10 @@ TIM_HandleTypeDef htim7;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint8_t btn_pressed = 0;
-uint16_t blink_delays[] = {500, 250, 100, 50, 25};
+volatile uint8_t btn_pressed = 0;
+volatile uint32_t last_btn_tick = 0;
+uint8_t pwm_on = 1; // 1 = running, 0 = stopped
+// uint16_t blink_delays[] = {500, 250, 100, 50, 25};
 uint8_t blink_idx = 0;
 /* USER CODE END PV */
 
@@ -146,7 +154,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint32_t now = HAL_GetTick(), next_blink = now + blink_delays[blink_idx];
+  uint32_t now = HAL_GetTick();
+  // uint32_t next_blink = now + blink_delays[blink_idx];
 
   while (1)
   {
@@ -159,15 +168,29 @@ int main(void)
     do it inside the if block, so that the time taken by the operations doesn't affect
     the timing of the next blink
     */
-    if (now >= next_blink) {
-      // printf("tick: %lu\n", now);
-      HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-      next_blink = now + blink_delays[blink_idx];
-    }
+
+    // if (now >= next_blink) {
+    //   // printf("tick: %lu\n", now);
+    //   HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+    //   next_blink = now + blink_delays[blink_idx];
+    // }
 
     if (btn_pressed) {
       btn_pressed = 0;
-      blink_idx = (blink_idx + 1) % (sizeof(blink_delays) / sizeof(blink_delays[0]));
+      // debounce handled here in the main loop: ignore presses within DEBOUNCE_MS
+      if ((now - last_btn_tick) >= DEBOUNCE_MS) {
+        last_btn_tick = now;
+        if (pwm_on) {
+          HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+          pwm_on = 0;
+          printf("PWM stopped\n");
+        } else {
+          HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+          pwm_on = 1;
+          printf("PWM started\n");
+        }
+      }
+      // blink_idx = (blink_idx + 1) % (sizeof(blink_delays) / sizeof(blink_delays[0]));
       // printf("button pressed\n");
     }
   }
@@ -241,9 +264,11 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 59999;
+  // htim4.Init.Prescaler = 59999;
+  htim4.Init.Prescaler = 89; 
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 1399;
+  // htim4.Init.Period = 1399;
+  htim4.Init.Period = 2272;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -266,7 +291,7 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 700;
+  sConfigOC.Pulse = 1136;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
