@@ -38,7 +38,7 @@
  * as requested so EXTI only sets the `btn_pressed` flag.
  */
 // #define DEBOUNCE_MS 50
-#define DEBOUNCE_MS 120
+#define DEBOUNCE_MS 200
 
 /* USER CODE END PD */
 
@@ -57,8 +57,8 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 volatile uint8_t btn_pressed = 0;
 volatile uint32_t last_btn_tick = 0;
-uint8_t pwm_on = 1; // 1 = running, 0 = stopped
-// uint16_t blink_delays[] = {500, 250, 100, 50, 25};
+uint8_t pwm_on = 0; // 1 = running, 0 = stopped
+uint16_t blink_delays[] = {500, 250, 100, 50, 25};
 uint8_t blink_idx = 0;
 /* USER CODE END PV */
 
@@ -91,6 +91,11 @@ int _write(int fd, char* ptr, int len) {
   return -1;
 }
 
+inline uint32_t HAL_GetTick(void)
+{
+  return uwTick;
+}
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == B1_Pin) {
@@ -117,6 +122,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   */
 int main(void)
 {
+  printf("restart \n");
 
   /* USER CODE BEGIN 1 */
 
@@ -144,12 +150,14 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM7_Init();
   MX_TIM4_Init();
+  
   /* USER CODE BEGIN 2 */
 
   // HAL_TIM_Base_Start_IT(&htim6);
   // HAL_TIM_Base_Start_IT(&htim7);
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
   // HAL_TIM_Base_Start(&htim6);
+
+  // HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
 
   /* USER CODE END 2 */
 
@@ -157,6 +165,18 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   uint32_t now = HAL_GetTick();
   // uint32_t next_blink = now + blink_delays[blink_idx];
+  uint32_t next_blink = now + 300;
+  uint32_t next_loop_counter_log = now + 1000;
+
+  uint16_t new_period = htim4.Init.Period * 16;
+  uint16_t new_prescaler = htim4.Init.Prescaler;
+  uint16_t new_pulse = new_period / 2;
+  static const double SEMITONE_RATIO = 1.0594630943592952646;
+  static const int minor_scale[] = {0, 2, 3, 5, 7, 8, 10, 12};
+  uint32_t loop_counter = 0;
+
+    printf("SYSCLK=%lu\r\n", HAL_RCC_GetSysClockFreq());
+    printf("HCLK=%lu\r\n", HAL_RCC_GetHCLKFreq());
 
   while (1)
   {
@@ -164,36 +184,56 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     now = HAL_GetTick();
+    // now = uwTick; // directly read the tick count variable to avoid function call overhead, since we're already in a critical timing section (main loop)
     /*
     try not to do operations in the if check
     do it inside the if block, so that the time taken by the operations doesn't affect
     the timing of the next blink
     */
 
-    // if (now >= next_blink) {
-    //   // printf("tick: %lu\n", now);
-    //   HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    //   next_blink = now + blink_delays[blink_idx];
-    // }
+    // log loop counter
+    if (now >= next_loop_counter_log) {
+      printf("loop_counter: %lu\n", loop_counter);
+      loop_counter = 0;
+      next_loop_counter_log = now + 1000;
+    }
 
     if (btn_pressed) {
-      btn_pressed = 0;
+      // btn_pressed = 0;
+
       // debounce handled here in the main loop: ignore presses within DEBOUNCE_MS
-      if ((now - last_btn_tick) >= DEBOUNCE_MS) {
-        last_btn_tick = now;
-        if (pwm_on) {
-          HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
-          pwm_on = 0;
-          printf("PWM stopped\n");
-        } else {
+      // if ((now - last_btn_tick) >= DEBOUNCE_MS) {
+        // last_btn_tick = now;
+      if (now >= next_blink) {
+        // if (pwm_on) {
+        //   HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+        //   pwm_on = 0;
+        //   printf("PWM stopped\n");
+        // } else
+        {
           HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+          new_period /= SEMITONE_RATIO; // double the frequency
+          __HAL_TIM_SET_AUTORELOAD(&htim4, new_period);
+
+          // new_prescaler = (new_prescaler + 1) * 2 - 1; // double the timer clock frequency
+          // __HAL_TIM_SET_PRESCALER(&htim4, new_prescaler);
+          // __HAL_TIM_GENERATE_EVENT(&htim4, TIM_EVENTSOURCE_UPDATE);
+          // HAL_TIM_GenerateEvent(&htim4, TIM_EVENTSOURCE_UPDATE);
+
+          new_pulse = new_period / 2; // keep 50% duty cycle
+
+          // printf("new period: %u\n", new_period);
+          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, new_pulse); // 50% duty cycle
+
           pwm_on = 1;
-          printf("PWM started\n");
+          // printf("PWM started\n");
         }
+        next_blink = now + 300;
       }
       // blink_idx = (blink_idx + 1) % (sizeof(blink_delays) / sizeof(blink_delays[0]));
       // printf("button pressed\n");
     }
+  loop_counter++;
   }
   /* USER CODE END 3 */
 }
