@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <math.h>
 
 /* USER CODE END Includes */
 
@@ -37,8 +38,11 @@
  * in the main loop. We keep debounce in the main loop (not in EXTI)
  * as requested so EXTI only sets the `btn_pressed` flag.
  */
-// #define DEBOUNCE_MS 50
 #define DEBOUNCE_MS 200
+
+#define SAMPLE_DELAY 10
+#define SAMPLE_FREQUENCY (1000 / SAMPLE_DELAY) // 100 Hz sample frequency
+#define SAMPLE_MID (SAMPLE_RANGE/2)
 
 /* USER CODE END PD */
 
@@ -55,6 +59,9 @@ TIM_HandleTypeDef htim7;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+float angle = 0;
+float angle_increment = 0.5 * 2 * M_PI / SAMPLE_FREQUENCY;
+
 volatile uint8_t btn_pressed = 0;
 volatile uint32_t last_btn_tick = 0;
 uint8_t pwm_on = 0; // 1 = running, 0 = stopped
@@ -122,7 +129,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   */
 int main(void)
 {
-  printf("restart \n");
 
   /* USER CODE BEGIN 1 */
 
@@ -150,7 +156,6 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM7_Init();
   MX_TIM4_Init();
-  
   /* USER CODE BEGIN 2 */
 
   // HAL_TIM_Base_Start_IT(&htim6);
@@ -164,19 +169,24 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   uint32_t now = HAL_GetTick();
-  // uint32_t next_blink = now + blink_delays[blink_idx];
-  uint32_t next_blink = now + 300;
+
   uint32_t next_loop_counter_log = now + 1000;
 
-  uint16_t new_period = htim4.Init.Period * 16;
-  uint16_t new_prescaler = htim4.Init.Prescaler;
-  uint16_t new_pulse = new_period / 2;
-  static const double SEMITONE_RATIO = 1.0594630943592952646;
-  static const int minor_scale[] = {0, 2, 3, 5, 7, 8, 10, 12};
-  uint32_t loop_counter = 0;
+  // uint32_t next_blink = now + blink_delays[blink_idx];
+  // uint32_t next_blink = now + 300;
 
-    printf("SYSCLK=%lu\r\n", HAL_RCC_GetSysClockFreq());
-    printf("HCLK=%lu\r\n", HAL_RCC_GetHCLKFreq());
+  // uint16_t new_period = htim4.Init.Period * 16;
+  // uint16_t new_prescaler = htim4.Init.Prescaler;
+  // uint16_t new_pulse = new_period / 2;
+  // static const double SEMITONE_RATIO = 1.0594630943592952646;
+  // static const int minor_scale[] = {0, 2, 3, 5, 7, 8, 10, 12};
+  uint32_t loop_counter = 0;
+  uint32_t next_sample = now + SAMPLE_DELAY;
+
+
+  printf("SYSCLK=%lu\r\n", HAL_RCC_GetSysClockFreq());
+  printf("HCLK=%lu\r\n", HAL_RCC_GetHCLKFreq());
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
 
   while (1)
   {
@@ -198,41 +208,51 @@ int main(void)
       next_loop_counter_log = now + 1000;
     }
 
-    if (btn_pressed) {
-      // btn_pressed = 0;
-
-      // debounce handled here in the main loop: ignore presses within DEBOUNCE_MS
-      // if ((now - last_btn_tick) >= DEBOUNCE_MS) {
-        // last_btn_tick = now;
-      if (now >= next_blink) {
-        // if (pwm_on) {
-        //   HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
-        //   pwm_on = 0;
-        //   printf("PWM stopped\n");
-        // } else
-        {
-          HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
-          new_period /= SEMITONE_RATIO; // double the frequency
-          __HAL_TIM_SET_AUTORELOAD(&htim4, new_period);
-
-          // new_prescaler = (new_prescaler + 1) * 2 - 1; // double the timer clock frequency
-          // __HAL_TIM_SET_PRESCALER(&htim4, new_prescaler);
-          // __HAL_TIM_GENERATE_EVENT(&htim4, TIM_EVENTSOURCE_UPDATE);
-          // HAL_TIM_GenerateEvent(&htim4, TIM_EVENTSOURCE_UPDATE);
-
-          new_pulse = new_period / 2; // keep 50% duty cycle
-
-          // printf("new period: %u\n", new_period);
-          __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, new_pulse); // 50% duty cycle
-
-          pwm_on = 1;
-          // printf("PWM started\n");
-        }
-        next_blink = now + 300;
+    // update PWM duty cycle to generate a sine wave
+    if (now >= next_sample) {
+      angle += angle_increment;
+      if (angle >= 2 * M_PI) {
+        angle -= 2 * M_PI;
       }
-      // blink_idx = (blink_idx + 1) % (sizeof(blink_delays) / sizeof(blink_delays[0]));
-      // printf("button pressed\n");
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, SAMPLE_MID - (SAMPLE_MID * sin(angle))); // 50% duty cycle
+      next_sample = now + SAMPLE_DELAY;
     }
+
+    // if (btn_pressed) {
+    //   // btn_pressed = 0;
+
+    //   // debounce handled here in the main loop: ignore presses within DEBOUNCE_MS
+    //   // if ((now - last_btn_tick) >= DEBOUNCE_MS) {
+    //     // last_btn_tick = now;
+    //   if (now >= next_blink) {
+    //     // if (pwm_on) {
+    //     //   HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+    //     //   pwm_on = 0;
+    //     //   printf("PWM stopped\n");
+    //     // } else
+    //     {
+    //       HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+    //       new_period /= SEMITONE_RATIO; // double the frequency
+    //       __HAL_TIM_SET_AUTORELOAD(&htim4, new_period);
+
+    //       // new_prescaler = (new_prescaler + 1) * 2 - 1; // double the timer clock frequency
+    //       // __HAL_TIM_SET_PRESCALER(&htim4, new_prescaler);
+    //       // __HAL_TIM_GENERATE_EVENT(&htim4, TIM_EVENTSOURCE_UPDATE);
+    //       // HAL_TIM_GenerateEvent(&htim4, TIM_EVENTSOURCE_UPDATE);
+
+    //       new_pulse = new_period / 2; // keep 50% duty cycle
+
+    //       // printf("new period: %u\n", new_period);
+    //       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, new_pulse); // 50% duty cycle
+
+    //       pwm_on = 1;
+    //       // printf("PWM started\n");
+    //     }
+    //     next_blink = now + 300;
+    //   }
+    //   // blink_idx = (blink_idx + 1) % (sizeof(blink_delays) / sizeof(blink_delays[0]));
+    //   // printf("button pressed\n");
+    // }
   loop_counter++;
   }
   /* USER CODE END 3 */
@@ -305,11 +325,9 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  // htim4.Init.Prescaler = 59999;
-  htim4.Init.Prescaler = 89; 
+  htim4.Init.Prescaler = 839;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  // htim4.Init.Period = 1399;
-  htim4.Init.Period = 2272;
+  htim4.Init.Period = SAMPLE_RANGE - 1;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -332,7 +350,7 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 1136;
+  sConfigOC.Pulse = 700;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
